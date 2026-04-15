@@ -2,77 +2,140 @@
 
 Credential-injecting HTTPS proxy for macOS. Stores API keys in the Keychain and injects them into outbound requests to whitelisted domains — transparently, for every process on the machine.
 
-## How it works
+## Architecture
 
-1. KeyProxy listens on `127.0.0.1:7777` and registers itself as the macOS system HTTPS proxy.
-2. Every outbound HTTPS connection on the machine arrives as a `CONNECT` request.
-3. If the destination host matches an **enabled rule**, KeyProxy:
-   - TLS-terminates the inbound connection using a leaf cert signed by its local CA
-   - Reads request headers and injects the credential from Keychain (e.g. `Authorization: Bearer …`)
-   - Opens a fresh TLS connection to the real upstream, forwards the request, streams the response back
-4. Everything else passes through as a **blind TCP tunnel** — never decrypted, never inspected.
+Two components:
 
-The calling process never sees the proxy. It dials `api.anthropic.com:443` and gets a real response with credentials silently attached.
+- **`keyproxyd`** — Rust daemon. Runs the HTTPS proxy (TCP listener + CONNECT routing + TLS interception via rustls + blind-tunnel fallback). State is fully runtime-injected over a Unix socket. Holds no persistent data.
+- **`KeyProxy.app`** — SwiftUI menu bar app. Owns the Keychain, the rule config file, CA trust prompts, and system proxy configuration. Spawns and talks to `keyproxyd` over a line-delimited JSON socket protocol. Fails closed: when the app quits, the daemon exits and the system proxy is cleared.
+
+```
+┌─────────────────────────────┐      spawns / IPC      ┌──────────────────────┐
+│  KeyProxy.app (SwiftUI)     │ ──────────────────────▶│  keyproxyd (Rust)    │
+│  · Keychain (API keys + CA) │   Unix socket 0600     │  · TCP :7777         │
+│  · config.json              │   line-delimited JSON  │  · CONNECT routing   │
+│  · networksetup control     │                        │  · TLS terminate     │
+│  · CA trust dialog          │                        │  · blind tunnel      │
+└─────────────────────────────┘                        └──────────────────────┘
+```
+
+See the spec at the top of the conversation for the end-to-end problem/solution framing.
 
 ## Requirements
 
-- macOS (Apple Silicon or Intel)
+- macOS 14+ (Sonoma)
 - Rust stable (1.77+)
-- [Bun](https://bun.sh) 1.1+
-- Tauri CLI: `bun install` then `bun run tauri`
+- Swift 5.9+ (Xcode 15 CLT or Xcode 15+)
 
-## Build & run (dev)
+## Build & run
 
+```bash
+./app/scripts/build-app.sh                 # release build
+CONFIG=debug ./app/scripts/build-app.sh    # debug build
+
+open build/KeyProxy.app
 ```
-bun install
-bun run tauri dev
-```
 
-First launch:
-1. App generates a local CA and stores the private key in Keychain.
-2. Click **Trust CA Certificate** in Settings → General. You'll be prompted for your admin password.
-3. Add a rule (Settings → Rules → Add rule). Enter the domain, header name, and credential.
-4. Click **Start** in the menu bar panel. System proxy is now set.
+The build script:
+1. Runs `swift build` for the app.
+2. Runs `cargo build` for the daemon.
+3. Assembles `build/KeyProxy.app` with the daemon at `Contents/Resources/keyproxyd`.
 
-Verify:
-```
+### First launch
+
+1. App generates a local CA (by asking the daemon) and stores the private key in your login Keychain.
+2. Open Settings → General → **Trust CA** — enter your admin password when prompted.
+3. Add a rule: domain, header name, credential. Credential is write-only from the UI (it goes straight to Keychain).
+4. Click **Start** in the menu bar popover. System HTTPS proxy is set to `127.0.0.1:7777`.
+
+### Verify
+
+```bash
+# succeeds — credentials injected by the proxy
 curl -v https://api.anthropic.com/v1/messages
-# Should succeed without ANTHROPIC_API_KEY in your environment.
 
+# passes through untouched — blind tunnel, no interception
 curl -v https://example.com
-# Should pass through untouched (blind tunnel).
 ```
-
-## Build release
-
-```
-bun run tauri build
-```
-
-Generates `.app` and `.dmg` in `src-tauri/target/release/bundle/`.
 
 ## File layout
 
-- `src-tauri/src/proxy/` — listener, CONNECT routing, TLS intercept, blind tunnel, CA + leaf cert cache
-- `src-tauri/src/keychain.rs` — secret storage via `security-framework`
-- `src-tauri/src/config.rs` — non-secret rule metadata (JSON in `~/Library/Application Support/KeyProxy/`)
-- `src-tauri/src/network.rs` — `networksetup` calls to set/unset system proxy
-- `src-tauri/src/stats.rs` — in-memory ring buffer (never persisted)
-- `src-tauri/src/commands.rs` — Tauri IPC surface
-- `src/` — React UI (menu bar panel + settings window)
+```
+key-proxy/
+├── daemon/                         # Rust daemon
+│   ├── Cargo.toml
+│   └── src/
+│       ├── main.rs                 # entry + socket path
+│       ├── ipc.rs                  # JSON IPC protocol
+│       ├── state.rs                # runtime rule/CA state
+│       ├── stats.rs                # log entry shape
+│       └── proxy/
+│           ├── mod.rs              # listener + shutdown
+│           ├── connect.rs          # CONNECT routing
+│           ├── intercept.rs        # TLS terminate + header inject + forward
+│           ├── tunnel.rs           # copy_bidirectional
+│           └── cert.rs             # CA gen, per-domain leaf cert cache
+└── app/                            # SwiftUI app
+    ├── Package.swift
+    ├── Resources/Info.plist        # LSUIElement = menu bar app
+    ├── scripts/build-app.sh        # assembles .app from SwiftPM binary + daemon
+    └── Sources/KeyProxy/
+        ├── KeyProxyApp.swift       # @main, MenuBarExtra + Settings scene
+        ├── Models/Rule.swift
+        ├── Services/
+        │   ├── KeychainStore.swift     # SecItem wrapper (device-only access)
+        │   ├── ConfigStore.swift       # ~/Library/Application Support/KeyProxy/config.json
+        │   ├── NetworkProxy.swift      # networksetup + CA trust via osascript
+        │   ├── DaemonClient.swift      # NWConnection unix socket + IPC
+        │   └── ProxyController.swift   # top-level ObservableObject
+        └── Views/
+            ├── MenuBarView.swift
+            ├── SettingsView.swift
+            ├── RulesTab.swift
+            ├── GeneralTab.swift
+            ├── StatsTab.swift
+            └── AddRuleSheet.swift
+```
+
+## IPC protocol (daemon)
+
+Line-delimited JSON on `~/Library/Application Support/KeyProxy/daemon.sock` (mode 0600).
+
+**Client → daemon:**
+
+```json
+{"id": 1, "cmd": "generate_ca"}
+{"id": 2, "cmd": "set_ca", "key_pem": "...", "cert_pem": "..."}
+{"id": 3, "cmd": "set_rules", "rules": [{"domain": "api.anthropic.com", "header_name": "x-api-key", "credential": "..."}]}
+{"id": 4, "cmd": "start", "port": 7777}
+{"id": 5, "cmd": "stop"}
+{"id": 6, "cmd": "subscribe_logs"}
+{"id": 7, "cmd": "ping"}
+```
+
+**Daemon → client:**
+
+```json
+{"type": "ok", "id": 1}
+{"type": "error", "id": 2, "message": "..."}
+{"type": "ca", "id": 1, "key_pem": "...", "cert_pem": "..."}
+{"type": "pong", "id": 7}
+{"type": "log", "timestamp": "2026-04-15T12:34:56Z", "domain": "api.anthropic.com", "status": 200, "latency_ms": 12, "intercepted": true, "error": null}
+```
 
 ## Security properties
 
 | Property | Mechanism |
 |---|---|
-| Keys never on disk as plaintext | macOS Keychain |
-| CA private key hardware-bound, device-only | `kSecAttrAccessibleWhenUnlockedThisDeviceOnly` via Keychain |
+| Keys never on disk as plaintext | macOS Keychain (`kSecAttrAccessibleWhenUnlockedThisDeviceOnly`) |
+| Daemon holds secrets in memory only | `keyproxyd` receives rules/CA at startup, never touches disk |
+| IPC socket not world-readable | Unix socket with 0600 permissions |
 | Non-whitelisted traffic untouched | Blind TCP tunnel — no TLS termination |
-| No persistent request logging | In-memory ring buffer only, cleared on app quit |
-| Proxy fails closed | System proxy disabled on exit |
+| No persistent request logging | In-memory only; cleared on daemon exit |
+| Proxy fails closed | Daemon shuts down when Swift side disconnects; system proxy cleared on app quit |
 
 ## Notes
 
-- The included icons are 1×1 transparent placeholders. Replace `src-tauri/icons/*.png` with a real icon set before shipping, or run `npx @tauri-apps/cli icon path/to/source.png`.
-- Only HTTPS interception is supported (CONNECT tunnels). Plain HTTP is not a goal — credentials shouldn't travel over cleartext anyway.
-- The CA trust uses `security add-trusted-cert` via an admin `osascript` prompt. Remove trust at any time from Settings → General → Remove Trust.
+- The `.app` currently isn't code-signed. For a signed build, add a signing step after `cp` in `scripts/build-app.sh` (`codesign --sign "Developer ID Application: …" --deep build/KeyProxy.app`).
+- The menu bar uses an SF Symbol (`key` / `key.fill`). Replace with a custom template image by bundling a PNG and using `Image(nsImage:)` if you want your own icon.
+- Only HTTPS is supported (CONNECT tunnels). Plain HTTP isn't a goal — credentials shouldn't travel over cleartext anyway.

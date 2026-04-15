@@ -12,5 +12,6 @@ KeyProxy.xcodeproj/
 DerivedData/
 *.xcuserstate
 .swiftpm/
+build/
 Package.resolved
 xcuserdata/

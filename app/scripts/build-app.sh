@@ -12,8 +12,6 @@ CONFIG="${CONFIG:-release}"
 echo "→ Building Swift executable ($CONFIG)..."
 cd "$APP_SRC"
 swift build -c "$CONFIG"
-SWIFT_BIN="$APP_SRC/.build/$(swift build -c "$CONFIG" --show-bin-path)/KeyProxy"
-# swift build --show-bin-path already prints the absolute path
 SWIFT_BIN_PATH="$(swift build -c "$CONFIG" --show-bin-path)/KeyProxy"
 
 echo "→ Building daemon ($CONFIG)..."
