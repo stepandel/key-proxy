@@ -18,14 +18,14 @@ The calling process never sees the proxy. It dials `api.anthropic.com:443` and g
 
 - macOS (Apple Silicon or Intel)
 - Rust stable (1.77+)
-- Node 18+ and npm
-- Tauri CLI: `npm install` then `npm run tauri`
+- [Bun](https://bun.sh) 1.1+
+- Tauri CLI: `bun install` then `bun run tauri`
 
 ## Build & run (dev)
 
 ```
-npm install
-npm run tauri dev
+bun install
+bun run tauri dev
 ```
 
 First launch:
@@ -46,7 +46,7 @@ curl -v https://example.com
 ## Build release
 
 ```
-npm run tauri build
+bun run tauri build
 ```
 
 Generates `.app` and `.dmg` in `src-tauri/target/release/bundle/`.
