@@ -6,7 +6,6 @@ pub mod proxy;
 pub mod stats;
 
 use std::sync::Arc;
-use tauri::image::Image;
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{Manager, RunEvent, WindowEvent};
@@ -109,7 +108,7 @@ fn build_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
     let quit = MenuItem::with_id(app, "quit", "Quit KeyProxy", true, None::<&str>)?;
     let menu = Menu::with_items(app, &[&open, &settings, &toggle, &quit])?;
 
-    let icon = default_tray_icon();
+    let icon = tauri::include_image!("icons/tray.png");
 
     let _tray = TrayIconBuilder::with_id("main-tray")
         .icon(icon)
@@ -159,14 +158,3 @@ fn show_main(app: &tauri::AppHandle) {
     }
 }
 
-fn default_tray_icon() -> Image<'static> {
-    // 1x1 transparent PNG — user can replace with real icon.
-    const PNG: &[u8] = &[
-        0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44,
-        0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00, 0x00, 0x1F,
-        0x15, 0xC4, 0x89, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9C, 0x62, 0x00,
-        0x01, 0x00, 0x00, 0x05, 0x00, 0x01, 0x0D, 0x0A, 0x2D, 0xB4, 0x00, 0x00, 0x00, 0x00, 0x49,
-        0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82,
-    ];
-    Image::from_bytes(PNG).expect("tray icon")
-}
