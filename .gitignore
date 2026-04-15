@@ -1,8 +1,16 @@
-node_modules/
-dist/
-src-tauri/target/
-src-tauri/gen/
-*.log
 .DS_Store
 .env
 .env.local
+*.log
+
+# Rust
+daemon/target/
+
+# Swift / Xcode
+KeyProxy.xcodeproj/
+.build/
+DerivedData/
+*.xcuserstate
+.swiftpm/
+Package.resolved
+xcuserdata/
