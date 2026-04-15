@@ -21,6 +21,7 @@ pub struct RuleDto {
 #[derive(Debug, Deserialize)]
 #[serde(tag = "cmd", rename_all = "snake_case")]
 pub enum Command {
+    GenerateCa,
     SetCa { key_pem: String, cert_pem: String },
     SetRules { rules: Vec<RuleDto> },
     Start { port: u16 },
@@ -43,7 +44,7 @@ pub enum Event<'a> {
     Error { id: Option<u64>, message: String },
     Pong { id: Option<u64> },
     Log(&'a LogEntry),
-    Status { active: bool, port: Option<u16> },
+    Ca { id: Option<u64>, key_pem: String, cert_pem: String },
 }
 
 pub async fn serve(socket_path: std::path::PathBuf) -> Result<()> {
@@ -119,6 +120,11 @@ async fn handle_command(
     let id = req.id;
     let result: Result<()> = async {
         match req.cmd {
+            Command::GenerateCa => {
+                let (key_pem, cert_pem) = crate::proxy::cert::generate_ca()?;
+                send(&write, &Event::Ca { id, key_pem, cert_pem }).await?;
+                return Ok(());
+            }
             Command::SetCa { key_pem, cert_pem } => {
                 let store = CertStore::from_pem(&key_pem, &cert_pem)?;
                 session.state.set_ca(Arc::new(store));

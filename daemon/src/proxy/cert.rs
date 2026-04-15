@@ -1,7 +1,8 @@
 use anyhow::{Context, Result};
 use dashmap::DashMap;
 use rcgen::{
-    Certificate, CertificateParams, DistinguishedName, DnType, KeyPair,
+    BasicConstraints, Certificate, CertificateParams, DistinguishedName, DnType, IsCa, KeyPair,
+    KeyUsagePurpose,
 };
 use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
 use rustls::sign::CertifiedKey;
@@ -63,6 +64,23 @@ fn build_server_config(ca: &CertStore, domain: &str) -> Result<ServerConfig> {
         .with_no_client_auth()
         .with_cert_resolver(Arc::new(resolver));
     Ok(config)
+}
+
+pub fn generate_ca() -> Result<(String, String)> {
+    let key_pair = KeyPair::generate().context("generate CA keypair")?;
+    let mut params = CertificateParams::new(Vec::<String>::new())?;
+    let mut dn = DistinguishedName::new();
+    dn.push(DnType::CommonName, "KeyProxy Local CA");
+    dn.push(DnType::OrganizationName, "KeyProxy");
+    params.distinguished_name = dn;
+    params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
+    params.key_usages = vec![
+        KeyUsagePurpose::KeyCertSign,
+        KeyUsagePurpose::CrlSign,
+        KeyUsagePurpose::DigitalSignature,
+    ];
+    let cert = params.self_signed(&key_pair)?;
+    Ok((key_pair.serialize_pem(), cert.pem()))
 }
 
 #[derive(Debug)]
