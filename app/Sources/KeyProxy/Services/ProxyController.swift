@@ -20,6 +20,14 @@ final class ProxyController: ObservableObject {
     // MARK: - lifecycle
 
     func onAppLaunch() async {
+        // Startup sanity check: if the system proxy is still pointing at us from a
+        // previous run (crash, force-quit, power-off) but our daemon hasn't bound
+        // the port yet, every HTTPS request on the machine is blackholed. Clear it.
+        if NetworkProxy.isOwnedByUs(port: configStore.config.port) {
+            NetworkProxy.disable()
+            status = "Cleared stale proxy from previous session"
+        }
+
         caTrusted = CATrust.isTrusted()
         await daemon.startDaemonIfNeeded()
         await ensureCAExists()

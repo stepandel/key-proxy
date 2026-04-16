@@ -105,9 +105,11 @@ async fn handle_client(stream: UnixStream) -> Result<()> {
         handle_command(session.clone(), write.clone(), req).await;
     }
 
-    // Client disconnected — fail closed: stop proxy.
+    // Client disconnected — fail closed: stop proxy AND clear the system
+    // proxy config so the user doesn't get blackholed.
     if let Some(h) = session.proxy.lock().await.take() {
         h.shutdown().await;
+        crate::network::disable_all();
     }
     Ok(())
 }

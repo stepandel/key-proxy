@@ -1,6 +1,19 @@
 import Foundation
+import SystemConfiguration
 
 enum NetworkProxy {
+    /// True when a system HTTPS proxy is currently set to 127.0.0.1:`port`.
+    /// Used on launch to detect a leftover proxy from a previous crash.
+    static func isOwnedByUs(port: UInt16) -> Bool {
+        guard let settings = SCDynamicStoreCopyProxies(nil) as? [String: Any] else {
+            return false
+        }
+        let httpsHost = settings["HTTPSProxy"] as? String
+        let httpsPort = (settings["HTTPSPort"] as? NSNumber)?.intValue
+        let httpsOn = (settings["HTTPSEnable"] as? NSNumber)?.intValue == 1
+        return httpsOn && httpsHost == "127.0.0.1" && httpsPort == Int(port)
+    }
+
     static func listServices() -> [String] {
         let out = run(["-listallnetworkservices"]) ?? ""
         return out.split(separator: "\n")
