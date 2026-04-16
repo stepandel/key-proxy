@@ -134,6 +134,18 @@ Line-delimited JSON on `~/Library/Application Support/KeyProxy/daemon.sock` (mod
 | No persistent request logging | In-memory only; cleared on daemon exit |
 | Proxy fails closed | Daemon shuts down when Swift side disconnects; system proxy cleared on app quit |
 
+## Recovering from a stuck proxy
+
+If something goes wrong and HTTPS on the whole machine stops working (dead daemon, force-quit, uninstalled app with proxy still set), run the daemon binary directly with `--unset`:
+
+```bash
+./build/KeyProxy.app/Contents/Resources/keyproxyd --unset
+# or if installed in /Applications:
+/Applications/KeyProxy.app/Contents/Resources/keyproxyd --unset
+```
+
+This disables the system HTTPS proxy on every network interface and exits. Always safe to run. The app also does this automatically on launch if it detects a leftover proxy from a previous crash, and on quit via `applicationWillTerminate`.
+
 ## Notes
 
 - The `.app` currently isn't code-signed. For a signed build, add a signing step after `cp` in `scripts/build-app.sh` (`codesign --sign "Developer ID Application: …" --deep build/KeyProxy.app`).
